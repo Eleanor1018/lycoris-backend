@@ -2,6 +2,10 @@ package com.lycoris.controller;
 
 import com.lycoris.dto.MarkerUpdateRequest;
 import com.lycoris.entity.MapMarker;
+import com.lycoris.entity.MarkerEditProposal;
+import com.lycoris.entity.MarkerImageProposal;
+import com.lycoris.repository.MarkerEditProposalRepository;
+import com.lycoris.repository.MarkerImageProposalRepository;
 import com.lycoris.service.MapMarkerService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,12 +25,20 @@ import java.util.Map;
 public class AdminMarkerController {
 
     private final MapMarkerService markerService;
+    private final MarkerImageProposalRepository imageProposalRepo;
+    private final MarkerEditProposalRepository editProposalRepo;
     private static final long SECOND_FACTOR_TTL_MS = 30 * 60 * 1000L;
     @Value("${app.upload-dir}")
     private String uploadDir;
 
-    public AdminMarkerController(MapMarkerService markerService) {
+    public AdminMarkerController(
+            MapMarkerService markerService,
+            MarkerImageProposalRepository imageProposalRepo,
+            MarkerEditProposalRepository editProposalRepo
+    ) {
         this.markerService = markerService;
+        this.imageProposalRepo = imageProposalRepo;
+        this.editProposalRepo = editProposalRepo;
     }
 
     @GetMapping("/pending")
@@ -44,6 +57,82 @@ public class AdminMarkerController {
                 .orElseGet(() -> ResponseEntity.status(404).body("点位不存在"));
     }
 
+    @GetMapping("/pending-edits")
+    public List<Map<String, Object>> pendingEditProposals() {
+        return editProposalRepo.findByStatusOrderByCreatedAtDesc("PENDING").stream()
+                .map(p -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", p.getId());
+                    item.put("markerId", p.getMarkerId());
+                    item.put("markerTitle", p.getMarkerTitle());
+                    item.put("lat", p.getMarkerLat());
+                    item.put("lng", p.getMarkerLng());
+                    item.put("category", p.getCategory());
+                    item.put("title", p.getTitle());
+                    item.put("description", p.getDescription());
+                    item.put("isPublic", p.getIsPublic());
+                    item.put("isActive", p.getIsActive());
+                    item.put("openTimeStart", p.getOpenTimeStart());
+                    item.put("openTimeEnd", p.getOpenTimeEnd());
+                    item.put("proposerUsername", p.getProposerUsername());
+                    item.put("proposerPublicId", p.getProposerPublicId());
+                    item.put("proposerIsOwner", p.getProposerIsOwner());
+                    item.put("status", p.getStatus());
+                    item.put("createdAt", p.getCreatedAt());
+                    return item;
+                })
+                .toList();
+    }
+
+    @PostMapping("/edit-proposals/{id}/approve")
+    public ResponseEntity<?> approveEditProposal(@PathVariable("id") Long id, HttpSession session) {
+        return editProposalRepo.findById(id)
+                .<ResponseEntity<?>>map(p -> {
+                    if (!"PENDING".equalsIgnoreCase(p.getStatus())) {
+                        return ResponseEntity.badRequest().body("该提案已处理");
+                    }
+
+                    return markerService.findById(p.getMarkerId())
+                            .<ResponseEntity<?>>map(marker -> {
+                                marker.setCategory(markerService.normalizeCategoryForWrite(p.getCategory()));
+                                marker.setTitle(p.getTitle());
+                                marker.setDescription(p.getDescription());
+                                marker.setIsPublic(p.getIsPublic());
+                                marker.setIsActive(p.getIsActive());
+                                markerService.applyOpenTimeWindow(marker, p.getOpenTimeStart(), p.getOpenTimeEnd());
+                                marker.setReviewStatus("APPROVED");
+                                marker.setLastEditedBy(p.getProposerUsername());
+                                marker.setLastEditedByPublicId(p.getProposerPublicId());
+                                marker.setLastEditedByOwner(p.getProposerIsOwner());
+                                markerService.save(marker);
+
+                                p.setStatus("APPROVED");
+                                p.setReviewedBy(String.valueOf(session.getAttribute("username")));
+                                p.setReviewedAt(Instant.now());
+                                editProposalRepo.save(p);
+                                return ResponseEntity.ok(marker);
+                            })
+                            .orElseGet(() -> ResponseEntity.status(404).body("关联点位不存在"));
+                })
+                .orElseGet(() -> ResponseEntity.status(404).body("编辑提案不存在"));
+    }
+
+    @PostMapping("/edit-proposals/{id}/reject")
+    public ResponseEntity<?> rejectEditProposal(@PathVariable("id") Long id, HttpSession session) {
+        return editProposalRepo.findById(id)
+                .<ResponseEntity<?>>map(p -> {
+                    if (!"PENDING".equalsIgnoreCase(p.getStatus())) {
+                        return ResponseEntity.badRequest().body("该提案已处理");
+                    }
+                    p.setStatus("REJECTED");
+                    p.setReviewedBy(String.valueOf(session.getAttribute("username")));
+                    p.setReviewedAt(Instant.now());
+                    editProposalRepo.save(p);
+                    return ResponseEntity.ok().build();
+                })
+                .orElseGet(() -> ResponseEntity.status(404).body("编辑提案不存在"));
+    }
+
     @PostMapping("/{id}/reject")
     public ResponseEntity<?> reject(@PathVariable("id") Long id) {
         return markerService.findById(id)
@@ -53,6 +142,64 @@ public class AdminMarkerController {
                     return ResponseEntity.ok(updated);
                 })
                 .orElseGet(() -> ResponseEntity.status(404).body("点位不存在"));
+    }
+
+    @GetMapping("/pending-images")
+    public List<Map<String, Object>> pendingImages() {
+        return imageProposalRepo.findByStatusOrderByCreatedAtDesc("PENDING").stream()
+                .map(p -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", p.getId());
+                    item.put("markerId", p.getMarkerId());
+                    item.put("markerTitle", p.getMarkerTitle());
+                    item.put("proposerUsername", p.getProposerUsername());
+                    item.put("proposerPublicId", p.getProposerPublicId());
+                    item.put("imageUrl", p.getImageUrl());
+                    item.put("status", p.getStatus());
+                    item.put("createdAt", p.getCreatedAt());
+                    return item;
+                })
+                .toList();
+    }
+
+    @PostMapping("/image-proposals/{id}/approve")
+    public ResponseEntity<?> approveImageProposal(@PathVariable("id") Long id, HttpSession session) {
+        return imageProposalRepo.findById(id)
+                .<ResponseEntity<?>>map(p -> {
+                    if (!"PENDING".equalsIgnoreCase(p.getStatus())) {
+                        return ResponseEntity.badRequest().body("该提案已处理");
+                    }
+                    return markerService.findById(p.getMarkerId())
+                            .<ResponseEntity<?>>map(marker -> {
+                                marker.setMarkImage(p.getImageUrl());
+                                markerService.save(marker);
+
+                                p.setStatus("APPROVED");
+                                p.setReviewedBy(String.valueOf(session.getAttribute("username")));
+                                p.setReviewedAt(Instant.now());
+                                imageProposalRepo.save(p);
+
+                                return ResponseEntity.ok(marker);
+                            })
+                            .orElseGet(() -> ResponseEntity.status(404).body("关联点位不存在"));
+                })
+                .orElseGet(() -> ResponseEntity.status(404).body("图片提案不存在"));
+    }
+
+    @PostMapping("/image-proposals/{id}/reject")
+    public ResponseEntity<?> rejectImageProposal(@PathVariable("id") Long id, HttpSession session) {
+        return imageProposalRepo.findById(id)
+                .<ResponseEntity<?>>map(p -> {
+                    if (!"PENDING".equalsIgnoreCase(p.getStatus())) {
+                        return ResponseEntity.badRequest().body("该提案已处理");
+                    }
+                    p.setStatus("REJECTED");
+                    p.setReviewedBy(String.valueOf(session.getAttribute("username")));
+                    p.setReviewedAt(Instant.now());
+                    imageProposalRepo.save(p);
+                    return ResponseEntity.ok().build();
+                })
+                .orElseGet(() -> ResponseEntity.status(404).body("图片提案不存在"));
     }
 
     @GetMapping("/all")

@@ -3,7 +3,11 @@ package com.lycoris.controller;
 import com.lycoris.dto.MarkerCreateRequest;
 import com.lycoris.dto.MarkerUpdateRequest;
 import com.lycoris.entity.MapMarker;
+import com.lycoris.entity.MarkerEditProposal;
+import com.lycoris.entity.MarkerImageProposal;
 import com.lycoris.entity.MarkerFavorite;
+import com.lycoris.repository.MarkerEditProposalRepository;
+import com.lycoris.repository.MarkerImageProposalRepository;
 import com.lycoris.service.MapMarkerService;
 import com.lycoris.service.UserService;
 import com.lycoris.repository.MarkerFavoriteRepository;
@@ -30,13 +34,23 @@ public class MarkerController {
     private final MapMarkerService markerService;
     private final UserService userService;
     private final MarkerFavoriteRepository favoriteRepo;
+    private final MarkerImageProposalRepository imageProposalRepo;
+    private final MarkerEditProposalRepository editProposalRepo;
     @Value("${app.upload-dir}")
     private String uploadDir;
 
-    public MarkerController(MapMarkerService markerService, UserService userService, MarkerFavoriteRepository favoriteRepo) {
+    public MarkerController(
+            MapMarkerService markerService,
+            UserService userService,
+            MarkerFavoriteRepository favoriteRepo,
+            MarkerImageProposalRepository imageProposalRepo,
+            MarkerEditProposalRepository editProposalRepo
+    ) {
         this.markerService = markerService;
         this.userService = userService;
         this.favoriteRepo = favoriteRepo;
+        this.imageProposalRepo = imageProposalRepo;
+        this.editProposalRepo = editProposalRepo;
     }
 
     // 创建点（必须登录：靠 session）
@@ -158,22 +172,29 @@ public class MarkerController {
             String userPublicId = userService.findById(userId)
                     .map(user -> String.valueOf(user.getPublicId()))
                     .orElse(null);
-            if (userPublicId == null || !userPublicId.equals(marker.getUserPublicId())) {
-                return ResponseEntity.status(403).body("无权限");
+            if (userPublicId == null) {
+                return ResponseEntity.status(401).body("请先登录");
             }
             try {
                 String ext = StringUtils.getFilenameExtension(file.getOriginalFilename());
                 String safeExt = (ext == null || ext.isBlank()) ? "png" : ext.toLowerCase();
-                String filename = "marker-" + id + "-" + UUID.randomUUID() + "." + safeExt;
+                String filename = "proposal-marker-" + id + "-" + UUID.randomUUID() + "." + safeExt;
                 Path imageDir = Paths.get(uploadDir, "markers");
                 Files.createDirectories(imageDir);
                 Path target = imageDir.resolve(filename);
                 Files.copy(file.getInputStream(), target);
 
                 String url = "/uploads/markers/" + filename;
-                marker.setMarkImage(url);
-                MapMarker updated = markerService.save(marker);
-                return ResponseEntity.ok(updated);
+                MarkerImageProposal proposal = new MarkerImageProposal();
+                proposal.setMarkerId(marker.getId());
+                proposal.setMarkerTitle(marker.getTitle());
+                proposal.setProposerUsername(String.valueOf(session.getAttribute("username")));
+                proposal.setProposerPublicId(userPublicId);
+                proposal.setImageUrl(url);
+                proposal.setStatus("PENDING");
+                imageProposalRepo.save(proposal);
+
+                return ResponseEntity.ok(marker);
             } catch (Exception e) {
                 return ResponseEntity.status(500).body("上传失败");
             }
@@ -199,24 +220,48 @@ public class MarkerController {
 
         return markerService.findById(id)
                 .<ResponseEntity<?>>map(marker -> {
+            String proposedCategory = marker.getCategory();
             if (req.getCategory() != null) {
-                marker.setCategory(markerService.normalizeCategoryForWrite(req.getCategory()));
+                proposedCategory = markerService.normalizeCategoryForWrite(req.getCategory());
             }
-            if (req.getTitle() != null) marker.setTitle(req.getTitle());
-            if (req.getDescription() != null) marker.setDescription(req.getDescription());
-            if (req.getIsPublic() != null) marker.setIsPublic(req.getIsPublic());
-            if (req.getOpenTimeStart() != null || req.getOpenTimeEnd() != null) {
-                markerService.applyOpenTimeWindow(marker, req.getOpenTimeStart(), req.getOpenTimeEnd());
-            }
-            if (req.getIsActive() != null) marker.setIsActive(req.getIsActive());
-            marker.setReviewStatus("PENDING");
-            marker.setLastEditedBy(String.valueOf(session.getAttribute("username")));
-            marker.setLastEditedByPublicId(userPublicId);
-            boolean isOwner = marker.getUserPublicId() != null && marker.getUserPublicId().equals(userPublicId);
-            marker.setLastEditedByOwner(isOwner);
 
-            MapMarker updated = markerService.save(marker);
-            return ResponseEntity.ok(updated);
+            String proposedTitle = req.getTitle() != null ? req.getTitle() : marker.getTitle();
+            String proposedDescription = req.getDescription() != null ? req.getDescription() : marker.getDescription();
+            Boolean proposedIsPublic = req.getIsPublic() != null ? req.getIsPublic() : marker.getIsPublic();
+            Boolean proposedIsActive = req.getIsActive() != null ? req.getIsActive() : marker.getIsActive();
+
+            String proposedOpenStart = marker.getOpenTimeStart();
+            String proposedOpenEnd = marker.getOpenTimeEnd();
+            if (req.getOpenTimeStart() != null || req.getOpenTimeEnd() != null) {
+                proposedOpenStart = markerService.normalizeOpenTime(req.getOpenTimeStart());
+                proposedOpenEnd = markerService.normalizeOpenTime(req.getOpenTimeEnd());
+                if ((proposedOpenStart == null) != (proposedOpenEnd == null)) {
+                    throw new IllegalArgumentException("请同时填写开始和结束时间，或都留空");
+                }
+            }
+
+            String username = String.valueOf(session.getAttribute("username"));
+            boolean isOwner = marker.getUserPublicId() != null && marker.getUserPublicId().equals(userPublicId);
+
+            MarkerEditProposal proposal = new MarkerEditProposal();
+            proposal.setMarkerId(marker.getId());
+            proposal.setMarkerTitle(marker.getTitle());
+            proposal.setMarkerLat(marker.getLat());
+            proposal.setMarkerLng(marker.getLng());
+            proposal.setProposerUsername(username);
+            proposal.setProposerPublicId(userPublicId);
+            proposal.setProposerIsOwner(isOwner);
+            proposal.setCategory(proposedCategory);
+            proposal.setTitle(proposedTitle);
+            proposal.setDescription(proposedDescription);
+            proposal.setIsPublic(proposedIsPublic);
+            proposal.setIsActive(proposedIsActive);
+            proposal.setOpenTimeStart(proposedOpenStart);
+            proposal.setOpenTimeEnd(proposedOpenEnd);
+            proposal.setStatus("PENDING");
+            editProposalRepo.save(proposal);
+
+            return ResponseEntity.ok(marker);
         }).orElseGet(() -> ResponseEntity.status(404).body("点位不存在"));
     }
 
