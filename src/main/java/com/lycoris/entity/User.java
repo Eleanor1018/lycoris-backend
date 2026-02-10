@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Getter
@@ -31,6 +32,12 @@ public class User {
 
     @Column(nullable = false, length = 32)
     private String role = "USER";
+
+    @Column(nullable = false, columnDefinition = "boolean not null default false")
+    private Boolean deleted = false;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
     @PrePersist
     public void ensurePublicId() {

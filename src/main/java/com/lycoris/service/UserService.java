@@ -2,10 +2,14 @@ package com.lycoris.service;
 
 import com.lycoris.entity.User;
 import com.lycoris.repository.UserRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.util.Locale;
 import java.util.Optional;
 
 @Service
@@ -20,17 +24,26 @@ public class UserService {
     }
 
     public User login(String usernameOrEmail, String rawPassword) {
+        if (usernameOrEmail == null || rawPassword == null) {
+            return null;
+        }
+        String identity = usernameOrEmail.trim();
+        if (identity.isEmpty()) {
+            return null;
+        }
+
         Optional<User> userOpt =
-                usernameOrEmail.contains("@")
-                        ? userRepository.findByEmail(usernameOrEmail)
-                        : userRepository.findByUsername(usernameOrEmail);
+                identity.contains("@")
+                        ? userRepository.findByEmailAndDeletedFalse(identity.toLowerCase(Locale.ROOT))
+                        : userRepository.findByUsernameAndDeletedFalse(identity);
 
         if (userOpt.isEmpty()) return null;
 
         User user = userOpt.get();
-        if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
+        if (!matchesPasswordSafely(rawPassword, user.getPassword())) {
             return null;
         }
+        migrateLegacyPasswordIfNeeded(user, rawPassword);
         return user;
     }
 
@@ -58,6 +71,10 @@ public class UserService {
     }
 
     public Optional<User> findById(Integer id) {
+        return userRepository.findByIdAndDeletedFalse(id);
+    }
+
+    public Optional<User> findAnyById(Integer id) {
         return userRepository.findById(id);
     }
 
@@ -65,13 +82,79 @@ public class UserService {
         return userRepository.save(user);
     }
 
+    public Page<User> searchForAdmin(String q, Pageable pageable) {
+        String keyword = q == null ? "" : q.trim();
+        return userRepository.searchForAdmin(keyword, pageable);
+    }
+
+    public boolean deleteById(Integer id) {
+        if (id == null) {
+            return false;
+        }
+        Optional<User> userOpt = userRepository.findByIdAndDeletedFalse(id);
+        if (userOpt.isEmpty()) {
+            return false;
+        }
+        User user = userOpt.get();
+        user.setDeleted(true);
+        user.setDeletedAt(Instant.now());
+        userRepository.save(user);
+        return true;
+    }
+
+    public User restore(User user) {
+        if (user == null) {
+            return null;
+        }
+        user.setDeleted(false);
+        user.setDeletedAt(null);
+        return userRepository.save(user);
+    }
+
+    public User resetPassword(User user, String rawPassword) {
+        user.setPassword(passwordEncoder.encode(rawPassword));
+        return userRepository.save(user);
+    }
+
     public boolean changePassword(User user, String oldPassword, String newPassword) {
         if (user == null) return false;
         if (newPassword == null || newPassword.length() < 4) return false;
-        if (!passwordEncoder.matches(oldPassword, user.getPassword())) return false;
+        if (!matchesPasswordSafely(oldPassword, user.getPassword())) return false;
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
         return true;
+    }
+
+    private boolean matchesPasswordSafely(String rawPassword, String storedPassword) {
+        if (rawPassword == null || storedPassword == null || storedPassword.isBlank()) {
+            return false;
+        }
+        try {
+            if (passwordEncoder.matches(rawPassword, storedPassword)) {
+                return true;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // Legacy plaintext passwords are handled by the fallback below.
+        }
+        return rawPassword.equals(storedPassword);
+    }
+
+    private void migrateLegacyPasswordIfNeeded(User user, String rawPassword) {
+        String storedPassword = user.getPassword();
+        if (storedPassword == null || storedPassword.isBlank()) {
+            return;
+        }
+        if (looksLikeBcryptHash(storedPassword)) {
+            return;
+        }
+        user.setPassword(passwordEncoder.encode(rawPassword));
+        userRepository.save(user);
+    }
+
+    private boolean looksLikeBcryptHash(String value) {
+        return value.startsWith("$2a$")
+                || value.startsWith("$2b$")
+                || value.startsWith("$2y$");
     }
 
 }

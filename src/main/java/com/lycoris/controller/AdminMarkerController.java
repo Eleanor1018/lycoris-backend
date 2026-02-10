@@ -42,12 +42,16 @@ public class AdminMarkerController {
     }
 
     @GetMapping("/pending")
-    public List<MapMarker> pendingList() {
-        return markerService.listPendingReview();
+    public ResponseEntity<?> pendingList(HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
+        return ResponseEntity.ok(markerService.listPendingReview());
     }
 
     @PostMapping("/{id}/approve")
-    public ResponseEntity<?> approve(@PathVariable("id") Long id) {
+    public ResponseEntity<?> approve(@PathVariable("id") Long id, HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
         return markerService.findById(id)
                 .<ResponseEntity<?>>map(marker -> {
                     marker.setReviewStatus("APPROVED");
@@ -58,8 +62,10 @@ public class AdminMarkerController {
     }
 
     @GetMapping("/pending-edits")
-    public List<Map<String, Object>> pendingEditProposals() {
-        return editProposalRepo.findByStatusOrderByCreatedAtDesc("PENDING").stream()
+    public ResponseEntity<?> pendingEditProposals(HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
+        return ResponseEntity.ok(editProposalRepo.findByStatusOrderByCreatedAtDesc("PENDING").stream()
                 .map(p -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("id", p.getId());
@@ -81,11 +87,13 @@ public class AdminMarkerController {
                     item.put("createdAt", p.getCreatedAt());
                     return item;
                 })
-                .toList();
+                .toList());
     }
 
     @PostMapping("/edit-proposals/{id}/approve")
     public ResponseEntity<?> approveEditProposal(@PathVariable("id") Long id, HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
         return editProposalRepo.findById(id)
                 .<ResponseEntity<?>>map(p -> {
                     if (!"PENDING".equalsIgnoreCase(p.getStatus())) {
@@ -119,6 +127,8 @@ public class AdminMarkerController {
 
     @PostMapping("/edit-proposals/{id}/reject")
     public ResponseEntity<?> rejectEditProposal(@PathVariable("id") Long id, HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
         return editProposalRepo.findById(id)
                 .<ResponseEntity<?>>map(p -> {
                     if (!"PENDING".equalsIgnoreCase(p.getStatus())) {
@@ -134,7 +144,9 @@ public class AdminMarkerController {
     }
 
     @PostMapping("/{id}/reject")
-    public ResponseEntity<?> reject(@PathVariable("id") Long id) {
+    public ResponseEntity<?> reject(@PathVariable("id") Long id, HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
         return markerService.findById(id)
                 .<ResponseEntity<?>>map(marker -> {
                     marker.setReviewStatus("REJECTED");
@@ -145,8 +157,10 @@ public class AdminMarkerController {
     }
 
     @GetMapping("/pending-images")
-    public List<Map<String, Object>> pendingImages() {
-        return imageProposalRepo.findByStatusOrderByCreatedAtDesc("PENDING").stream()
+    public ResponseEntity<?> pendingImages(HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
+        return ResponseEntity.ok(imageProposalRepo.findByStatusOrderByCreatedAtDesc("PENDING").stream()
                 .map(p -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("id", p.getId());
@@ -159,11 +173,13 @@ public class AdminMarkerController {
                     item.put("createdAt", p.getCreatedAt());
                     return item;
                 })
-                .toList();
+                .toList());
     }
 
     @PostMapping("/image-proposals/{id}/approve")
     public ResponseEntity<?> approveImageProposal(@PathVariable("id") Long id, HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
         return imageProposalRepo.findById(id)
                 .<ResponseEntity<?>>map(p -> {
                     if (!"PENDING".equalsIgnoreCase(p.getStatus())) {
@@ -188,6 +204,8 @@ public class AdminMarkerController {
 
     @PostMapping("/image-proposals/{id}/reject")
     public ResponseEntity<?> rejectImageProposal(@PathVariable("id") Long id, HttpSession session) {
+        ResponseEntity<?> blocked = requireSecondFactor(session);
+        if (blocked != null) return blocked;
         return imageProposalRepo.findById(id)
                 .<ResponseEntity<?>>map(p -> {
                     if (!"PENDING".equalsIgnoreCase(p.getStatus())) {

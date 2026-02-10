@@ -49,7 +49,7 @@ public class SecurityConfig {
                     System.out.println("SECURITY_BLOCKED " + request.getMethod() + " " + request.getRequestURI());
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                     response.setContentType("application/json; charset=UTF-8");
-                    response.getWriter().write("{\"message\":\"testerror\"}");
+                    response.getWriter().write("{\"message\":\"Spring Security Error\"}");
                 }))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .addFilterBefore(new SessionAuthFilter(), UsernamePasswordAuthenticationFilter.class);
